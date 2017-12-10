@@ -1,0 +1,97 @@
+#   Create hdfs directories
+hdfs dfs -mkdir <path where you want yourdirectory/name> <path where you want yourdirectory/name>
+Example:
+        hdfs dfs -mkdir /user/cloudera/contains/orders /user/cloudera/contains/order_items /user/cloudera/contains/products 
+
+
+#   Copy data from local files system to Hdfs
+hdfs dfs -copyFromLocal '<path of local file system>' '<path of local file system>' <path of hdfs directory>
+Example:
+        hdfs dfs -copyFromLocal /home/cloudera/Desktop/orders /user/cloudera/contains/orders
+        hdfs dfs -copyFromLocal /home/cloudera/Desktop/order_items /user/cloudera/contains/order_items
+        hdfs dfs -copyFromLocal /home/cloudera/Desktop/products /user/cloudera/contains/products
+
+
+#   Import data from mysql to hdfs using Sqoop
+sqoop import --connect jdbc:mysql//<localhost/ip address of relational database server>/<databasename> --username <username of database server> 
+--password/-p --table <tableName from mysql database> -m <number of partition yu want> --target-dir <hdfs directory where data is to be stored> <--as-textfile/--as-avrodatafile/   --as-sequencefile/ --as-parquetfile>
+
+#   import as textfile   
+sqoop import --connect jdbc:mysql://localhost/retail_db --username root -P --table categories --target-dir /contain -m 1 --as-textfile
+
+#   import as sequence file
+sqoop import --connect jdbc:mysql://localhost/retail_db --username root -P --table categories --target-dir /contain -m 1 --as-sequencefile
+
+#   import as avro file
+sqoop import --connect jdbc:mysql://localhost/retail_db --username root -P --table categories --target-dir /contain -m 1 --as-avrodatafile
+
+#   import as parquet file
+sqoop import --connect jdbc:mysql://localhost/retail_db --username root -P --table categories --target-dir /contain -m 1 --as-parquetfile
+
+#   Import data into hive via hdfs
+sqoop import --connect jdbc:mysql//<localhost/ip address of relational database server>/<databasename> --username <username of database server> 
+--password/-p --table <tableName from mysql database> -m <number of partition yu want> --hive-import --create-hive-table --hive-table <already created database in hive>.<table to be created in hive>
+
+sqoop import --connect jdbc:mysql://localhost/retail_db --username root -P --table categories -m 1 --hive-import --create-hive-table --hive-table testdb.categories
+
+#   Create hive table and load data in that from hdfs
+Create external table orders(order_id int, order_date timestamp, order_customer_id int, order_status string) row format delimited fields terminated by ',' lines terminated by '\n' location '/user/cloudera/contains/';
+
+Create external table order_items(order_item_id int,order_item_order_id int, order_item_product_id int,order_item_quantity int, order_item_subtotal float, order_item_product_price float) row format delimited fields terminated by ',' lines terminated by '\n' location '/user/cloudera/contains/order_items';
+
+Create external table products(product_id int,product_category_id int, product_name string,product_description string, product_price float, product_image string) row format delimited fields terminated by ',' lines terminated by '\n' location '/user/cloudera/contains/products';
+
+
+******************************************* Perform transformation on the tables present in hive testdb*****************************************
+
+#   Creating Partition
+
+Note: by default maximum 100 partition can be done at each node.
+
+SET hive.exec.dynamic.partition = true;
+SET hive.exec.dynamic.partition.mode = nonstrict;
+
+CREATE TABLE orders_DP(order_id Int, order_customer_id Int,order_date timestamp ) PARTITIONED BY (order_status String);
+
+
+INSERT OVERWRITE TABLE orders_DP PARTITION (order_status) SELECT order_id, order_customer_id,order_date, order_status FROM orders;
+
+#   copy  back the partitioned table to local file system
+hdfs dfs -copyToLocal /user/hive/warehouse/testdb.db/orders_dp /home/cloudera/Desktop/
+
+
+#   Creating bucket
+
+SET hive.exec.dynamic.partition = true;
+SET hive.exec.dynamic.partition.mode = nonstrict;
+SET hive .enforce.bucketing = true;
+
+CREATE TABLE order_view_p(order_id Int, order_customer_id Int,order_date timestamp) PARTITIONED BY (order_status String) CLUSTERED BY (order_date) INTO 3 BUCKETS row format delimited fields terminated by ',';
+
+INSERT OVERWRITE TABLE order_view_p PARTITION(order_status) SELECT order_id, order_customer_id, order_date, order_status  FROM orders;
+
+CREATE TABLE order_view_b1(order_id Int, order_customer_id Int,order_date timestamp,order_status String) CLUSTERED BY (order_date,order_status) INTO 3 BUCKETS row format delimited fields terminated by ',';
+
+INSERT OVERWRITE TABLE order_view_b1 SELECT order_id, order_customer_id, order_date, order_status  FROM orders;
+
+select * from order_view_b1 tablesample(bucket 1 out of 3 on order_date) order_view_b1; 
+
+
+#   Joining
+
+Select o.order_id,o.order_date,o.order_status,c.customer_fname,c.customer_lname, c.customer_email,c.customer_city from orders o join customers c  on (o.order_customer_id = c.customer_id) where o.order_status='COMPLETE';
+
+
+#   Storing the result in hdfs location
+insert overwrite directory '/user/cloudera/joinoutput' row format delimited fields terminated by '\t' stored as textfile Select o.order_id,o.order_date,o.order_status,c.customer_fname,c.customer_lname, c.customer_email,c.customer_city from orders o join customers c  on (o.order_customer_id = c.customer_id) where o.order_status='COMPLETE';  
+
+
+#   Export the result from hdfs to mysql
+Note : table in which you want to populate the data should be present in mysql database
+
+create table resultjoin(order_id int(11), order_date date,order_status varchar(20),customer_fname varchar(20), customer_lname varchar(20), customer_email varchar(20), customer_city varchar(20));
+
+sqoop export --connect jdbc:mysql://localhost/retail_db --username root -P --export-dir /user/cloudera/joinoutput --table resultjoin
+
+
+
