@@ -91,7 +91,7 @@ Note : table in which you want to populate the data should be present in mysql d
 
 create table resultjoin(order_id int(11), order_date date,order_status varchar(20),customer_fname varchar(20), customer_lname varchar(20), customer_email varchar(20), customer_city varchar(20));
 
-sqoop export --connect jdbc:mysql://localhost/retail_db --username root -P --export-dir /user/cloudera/joinoutput --table resultjoin
+sqoop export --connect jdbc:mysql://localhost/retail_db --username root -P --export-dir /user/cloudera/joinoutput --table resultjoin --driver com.mysql.jdbc.Driver
 
 
 
